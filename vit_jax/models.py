@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, Sequence, Union
 
 import flax.linen as nn
 import jax.numpy as jnp
-
+import numpy as np
 from vit_jax import models_mixer
 from vit_jax import models_resnet
 
@@ -112,6 +112,10 @@ class Encoder1DBlock(nn.Module):
     attention_dropout_rate: dropout for attention heads.
     deterministic: bool, deterministic or not (to apply dropout).
     num_heads: Number of heads in nn.MultiHeadDotProductAttention
+    external_memory: desribes the size of additional memory for embedding 
+    this transformer  will maintain. Can be either single number, or sequence 
+    of numbers. In latter case will create multiple blocks of memory named
+    memory_0, memory_1, etc.
   """
 
   mlp_dim: int
@@ -119,6 +123,8 @@ class Encoder1DBlock(nn.Module):
   dtype: Dtype = jnp.float32
   dropout_rate: float = 0.1
   attention_dropout_rate: float = 0.1
+
+  external_memory: Union[int, Sequence[int]] = 0
 
   @nn.compact
   def __call__(self, inputs, *, deterministic):
@@ -134,6 +140,23 @@ class Encoder1DBlock(nn.Module):
 
     # Attention block.
     assert inputs.ndim == 3, f'Expected (batch, seq, hidden) got {inputs.shape}'
+    (batch_size, seq, emb) = inputs.shape      
+
+    if self.external_memory:
+      if np.isscalar(self.external_memory):
+        named_blocks = [('', self.external_memory)]
+      else:
+        named_blocks = [(f'_{i}', v) for i,v in enumerate(self.external_memory)]
+      
+      memory_blocks = []
+      for suffix, block_size in named_blocks:  
+        memory_shape = (1, block_size, emb)
+        memory = self.param(
+          f'memory{suffix}', nn.initializers.normal(stddev=0.02), memory_shape)
+        memory = jnp.broadcast_to(memory, (batch_size, block_size, emb))
+        memory_blocks.append(memory)
+      inputs = jnp.concatenate([inputs, *memory_blocks], axis=1)
+
     x = nn.LayerNorm(dtype=self.dtype)(inputs)
     x = nn.MultiHeadDotProductAttention(
         dtype=self.dtype,
@@ -143,9 +166,10 @@ class Encoder1DBlock(nn.Module):
         dropout_rate=self.attention_dropout_rate,
         num_heads=self.num_heads)(
             x, x)
+    
     x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=deterministic)
     x = x + inputs
-
+    x = x[:, :seq, :]
     # MLP block.
     y = nn.LayerNorm(dtype=self.dtype)(x)
     y = MlpBlock(
@@ -171,6 +195,7 @@ class Encoder(nn.Module):
   num_heads: int
   dropout_rate: float = 0.1
   attention_dropout_rate: float = 0.1
+  external_memory: Optional[Union[int, Sequence[int]]] = 0
 
   @nn.compact
   def __call__(self, inputs, *, train):
@@ -198,7 +223,7 @@ class Encoder(nn.Module):
           dropout_rate=self.dropout_rate,
           attention_dropout_rate=self.attention_dropout_rate,
           name=f'encoderblock_{lyr}',
-          num_heads=self.num_heads)(
+          num_heads=self.num_heads, external_memory=self.external_memory)(
               x, deterministic=not train)
     encoded = nn.LayerNorm(name='encoder_norm')(x)
 

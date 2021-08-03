@@ -40,7 +40,7 @@ def _register(get_config):
   return get_config
 
 
-@_register
+@_register 
 def get_testing_config():
   """Returns a simple config used for testing."""
   config = ml_collections.ConfigDict()

@@ -33,8 +33,20 @@ from vit_jax import models
 from vit_jax import momentum_clip
 from vit_jax import utils
 
+def merge(a, b):
+  result = {}
+  for k, v in a.items():
+    if k in b: 
+      result[k] = merge(a[k], b[k])
+    else:
+      result[k] = v
+  for k, v in b.items():
+    if k not in result:
+      result[k] = v
+  return result
 
-def make_update_fn(*, apply_fn, accum_steps, lr_fn):
+
+def make_update_fn(*, apply_fn, accum_steps, lr_fn, frozen_param=flax.core.FrozenDict()):
   """Returns update step for data parallel training."""
 
   def update_fn(opt, step, batch, rng):
@@ -50,6 +62,8 @@ def make_update_fn(*, apply_fn, accum_steps, lr_fn):
       return -jnp.mean(jnp.sum(logp * labels, axis=1))
 
     def loss_fn(params, images, labels):
+      # print('Before copy', list(params.keys()), list(frozen_param.keys()))
+      params = merge(frozen_param, params)
       logits = apply_fn(
           dict(params=params),
           rngs=dict(dropout=dropout_rng),

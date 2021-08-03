@@ -16,6 +16,7 @@ import glob
 import os
 
 from absl import logging
+import functools
 import flax
 import jax
 import numpy as np
@@ -57,7 +58,7 @@ def get_directory_info(directory):
       examples_glob=examples_glob,
   )
 
-
+@functools.lru_cache()
 def get_dataset_info(dataset, split):
   """Returns information about a dataset.
   
@@ -201,7 +202,7 @@ def get_data(*,
       begin, size, _ = tf.image.sample_distorted_bounding_box(
           tf.shape(im),
           tf.zeros([0, 0, 4], tf.float32),
-          area_range=(0.05, 1.0),
+          area_range=(0.8, 1.0), # 0.05
           min_object_covered=0,  # Don't enforce a minimum area.
           use_image_if_no_bounding_boxes=True)
       im = tf.slice(im, begin, size)
